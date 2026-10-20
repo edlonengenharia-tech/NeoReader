@@ -142,7 +142,7 @@ function readCBZ(filePath) {
 
   return entries.map(entry => ({
     name: entry.entryName,
-     entry.getData().toString('base64'),
+    data: entry.getData().toString('base64'),
     mime: guessMime(entry.entryName),
   }));
 }
@@ -169,7 +169,7 @@ async function readCBR(filePath) {
     
     return files.map(file => ({
       name: file.fileHeader.name,
-       Buffer.from(file.extraction).toString('base64'),
+      data: Buffer.from(file.extraction).toString('base64'),
       mime: guessMime(file.fileHeader.name),
     }));
   } catch (error) {
