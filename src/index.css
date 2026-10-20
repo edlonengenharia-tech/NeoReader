@@ -1,1 +1,233 @@
 @import "tailwindcss";
+
+/* NekoReader - Improved Web Version */
+/* No native dependencies - pure browser APIs */
+
+:root,
+[data-theme="dark"] {
+  --bg: #14161b;
+  --bg2: #1b1e26;
+  --panel: #20242e;
+  --line: #2c313d;
+  --text: #e8eaf0;
+  --muted: #9aa1b2;
+  --accent: #7c5cff;
+  --accent2: #4ecdc4;
+  --danger: #ff6b6b;
+  --pill: #2a2f3c;
+  --pill-hover: #353b4b;
+  --pill-active: #7c5cff;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="midnight"] {
+  --bg: #0a0c12;
+  --bg2: #10131c;
+  --panel: #141826;
+  --line: #232a3d;
+  --accent: #5b8cff;
+  --accent2: #38d9c8;
+  --pill: #1b2233;
+  --pill-hover: #242e47;
+}
+
+[data-theme="light"] {
+  --bg: #f3f4f8;
+  --bg2: #ffffff;
+  --panel: #ffffff;
+  --line: #dde1ea;
+  --text: #1d2230;
+  --muted: #6a7183;
+  --pill: #e8ebf2;
+  --pill-hover: #dcdfeb;
+  --shadow: rgba(30, 40, 80, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Pill buttons */
+.pill-btn {
+  border: 1px solid var(--line);
+  background: var(--pill);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s, transform 0.05s;
+  white-space: nowrap;
+}
+
+.pill-btn:hover {
+  background: var(--pill-hover);
+}
+
+.pill-btn:active {
+  transform: scale(0.97);
+}
+
+/* Navigation buttons */
+.nav-btn {
+  width: 34px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--pill);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.nav-btn:hover {
+  background: var(--pill-hover);
+}
+
+/* Toggle buttons */
+.tog-btn {
+  border: 1px solid var(--line);
+  background: var(--pill);
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s;
+}
+
+.tog-btn:hover {
+  background: var(--pill-hover);
+}
+
+.tog-btn.active {
+  background: var(--pill-active);
+  border-color: var(--pill-active);
+  color: #fff;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Page transition */
+.page-enter {
+  animation: fadeIn 0.25s ease-out;
+}
+
+/* Pulse animation for loading */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-pulse {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+/* Smooth scrollbar for sidebar */
+.scrollbar-thin::-webkit-scrollbar {
+  height: 4px;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent);
+  color: white;
+}
+
+/* Focus styles */
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent) !important;
+  outline: none;
+}
+
+/* Hidden file input */
+input[type="file"].hidden {
+  display: none;
+}
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
