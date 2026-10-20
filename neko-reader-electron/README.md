@@ -2,53 +2,69 @@
 
 Leitor de quadrinhos e mangás para Windows, **sem dependências nativas problemáticas**.
 
-## ✅ O que mudou (vs v1)
+## ✅ Correções aplicadas
 
-| Problema na v1 | Solução na v2 |
-|---|---|
-| `canvas` (node-canvas) falha ao compilar no Windows | **Removido!** PDF é renderizado no renderer usando canvas HTML5 nativo do Chromium |
-| `@napi-rs/canvas` como dependência opcional | **Removido!** Não é mais necessário |
-| `sevenzip` com bindings nativos | **Removido!** Apenas formatos sem dependências nativas |
-| Erro `cairo.h: No such file or directory` | **Eliminado!** Zero compilação C++ |
-| Erro `404 Not Found` nos prebuilds do canvas | **Eliminado!** Não usa mais canvas nativo |
+### 1. Suporte a CBR/RAR adicionado
+Agora lê arquivos `.cbr` e `.rar` usando `node-unrar-js` (pure JavaScript, sem compilação nativa).
+
+### 2. Erro do electron-builder corrigido
+`fileAssociations` movido de `nsis` para `win` (posição correta).
+
+### 3. Zero dependências nativas
+- ❌ `canvas` (node-canvas) - **removido**
+- ❌ `@napi-rs/canvas` - **removido**  
+- ❌ `sevenzip` - **removido**
+- ✅ `node-unrar-js` - pure JS para CBR
+- ✅ `adm-zip` - pure JS para CBZ/ZIP
+- ✅ `pdfjs-dist` - renderiza PDF no browser
 
 ## 🎯 Formatos suportados
 
 | Formato | Como lê |
 |---|---|
 | `.cbz` / `.zip` | `adm-zip` (JavaScript puro) |
-| `.pdf` | `pdfjs-dist` renderizado no **renderer** via canvas HTML5 do Chromium |
-
-> **Nota:** CBR/RAR, CBT/TAR e CB7/7Z foram temporariamente removidos para eliminar todas as dependências nativas. Converta para CBZ (é só renomear .rar → .cbz usando 7-Zip).
+| `.cbr` / `.rar` | `node-unrar-js` (JavaScript puro) |
+| `.pdf` | `pdfjs-dist` renderizado no renderer via canvas HTML5 |
 
 ## 🚀 Como usar
 
-### Testar (rodar sem compilar)
+### Passo 1: Copiar a pasta
+Copie a pasta `neko-reader-electron/` para o seu PC Windows.
 
-```
-cd neko-reader-electron
-TESTE-NPM.cmd
-```
-
-Ou manualmente:
-```
+### Passo 2: Instalar dependências
+Abra o Prompt de Comando na pasta e execute:
+```cmd
 npm install
+```
+
+### Passo 3: Testar (opcional)
+```cmd
 npx electron .
 ```
 
-### Gerar EXE portátil
-
-```
-BUILD-PORTABLE.cmd
-```
-
-Ou manualmente:
-```
-npm install
+### Passo 4: Gerar EXE portátil
+```cmd
 npx electron-builder --win portable
 ```
 
-O EXE será gerado em `dist\NekoReader-portable.exe` — um único arquivo que você pode levar no pendrive!
+Ou use o script:
+```cmd
+BUILD-PORTABLE.cmd
+```
+
+O EXE será gerado em `dist\NekoReader-portable.exe`.
+
+## ⚠️ Se der erro no npm install
+
+Se aparecer erro de `node-unrar-js`, tente:
+```cmd
+npm install node-unrar-js --save
+```
+
+Se o erro persistir, verifique se o Node.js está na versão 18+:
+```cmd
+node --version
+```
 
 ## ⌨ Atalhos
 
@@ -64,53 +80,47 @@ O EXE será gerado em `dist\NekoReader-portable.exe` — um único arquivo que v
 | `Ctrl` + Scroll | Zoom com roda do mouse |
 | `Tab` | Mostrar/ocultar biblioteca |
 | `Esc` | Sair da tela cheia |
-| `Ctrl` + `,` | Abrir opções |
-| `Ctrl` + `I` | Painel de IA |
 
 ## 🤖 Integração com IA
 
 Configure em ⚙ Opções → IA:
-
-- **Qwen** (Alibaba DashScope) - chave grátis em dashscope.console.aliyun.com
-- **Ollama** (local, sem chave) - `http://localhost:11434/v1/chat/completions`
-- **LM Studio** (local)
-- Qualquer API compatível com OpenAI
+- **Qwen** (Alibaba) - chave grátis em dashscope.console.aliyun.com
+- **Ollama** (local) - `http://localhost:11434/v1/chat/completions`
 
 ## 📁 Estrutura
 
 ```
 neko-reader-electron/
 ├── src/
-│   ├── main.js         # Processo principal (janela, IPC, arquivos)
-│   ├── preload.js      # Bridge segura contextBridge
-│   ├── index.html      # UI + carrega pdf.js via CDN
-│   ├── style.css       # Temas (escuro/meia-noite/claro)
-│   └── renderer.js     # Lógica do leitor + renderização PDF
-├── package.json        # SEM canvas, SEM sevenzip, SEM @napi-rs/canvas
+│   ├── main.js         # Suporta CBZ, CBR, PDF
+│   ├── preload.js      # Bridge segura
+│   ├── index.html      # UI
+│   ├── style.css       # Temas
+│   └── renderer.js     # Renderiza PDF com canvas HTML5
+├── package.json        # SEM dependências nativas
 ├── BUILD-PORTABLE.cmd  # Gera o EXE
-└── TESTE-NPM.cmd       # Testa rapidamente
+└── README.md           # Este arquivo
 ```
 
 ## 🔧 Requisitos
 
-- **Node.js** 18+ (o v24 funciona)
+- **Node.js** 18+ (recomendado 20+)
 - **Windows** 10/11 x64
-- **Internet** na primeira compilação (para baixar dependências npm)
+- **Internet** na primeira compilação
 
 ## ❓ Problemas comuns
 
+### "Formato não suportado: .cbr"
+**Corrigido!** Agora suporta CBR. Certifique-se de usar a versão atualizada.
+
+### "Invalid configuration object" no electron-builder
+**Corrigido!** `fileAssociations` agora está na posição correta (`win`).
+
 ### "'electron' não é reconhecido"
-Rode `npm install` primeiro, ou use `npx electron .` em vez de `electron .`
+Use `npx electron .` em vez de `electron .`
 
-### "canvas.h not found" / "cairo.h not found"
-**Não acontece mais na v2!** Se ainda aparecer, você está usando a v1. Use esta versão.
-
-### EXE muito grande
-O portable inclui o runtime Electron (~150MB). É o custo de ser 100% portátil sem instalação.
-
-### PDF demora para abrir
-PDFs grandes são renderizados página por página. O progresso é mostrado na tela.
-Para PDFs muito grandes (500+ páginas), considere converter para CBZ com imagens já renderizadas.
+### EXE não gera
+Verifique se `npm install` completou sem erros. Se necessário, delete `node_modules` e `package-lock.json` e rode `npm install` novamente.
 
 ## 📝 Licença
 

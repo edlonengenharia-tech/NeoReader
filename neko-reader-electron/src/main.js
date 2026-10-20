@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
 const tar = require('tar');
+const { createExtractorFromFile } = require('node-unrar-js');
 
 // ---- State persistence ----
 const STATE_DIR = path.join(app.getPath('userData'));
@@ -60,18 +61,16 @@ function createWindow() {
     frame: false,
     backgroundColor: '#14161b',
     title: 'NekoReader',
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // needed for preload to use require
+      sandbox: false,
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
-  // Open DevTools in dev mode
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
@@ -88,7 +87,6 @@ if (!gotLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-      // Open file from CLI
       const fileArg = argv.find(a => /\.(cbz|cbr|cbt|cb7|zip|rar|7z|tar|pdf)$/i.test(a));
       if (fileArg && mainWindow) {
         mainWindow.webContents.once('did-finish-load', () => {
@@ -101,8 +99,6 @@ if (!gotLock) {
 
 app.whenReady().then(() => {
   createWindow();
-
-  // Open file from CLI on first launch
   const fileArg = process.argv.find(a => /\.(cbz|cbr|cbt|cb7|zip|rar|7z|tar|pdf)$/i.test(a));
   if (fileArg && mainWindow) {
     mainWindow.webContents.once('did-finish-load', () => {
@@ -119,21 +115,8 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// ---- Archive reading (CBZ/ZIP) ----
+// ---- Archive reading ----
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-
-function readCBZ(filePath) {
-  const zip = new AdmZip(filePath);
-  const entries = zip.getEntries()
-    .filter(e => !e.isDirectory && IMAGE_EXTS.some(ext => e.entryName.toLowerCase().endsWith(ext)))
-    .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true }));
-
-  return entries.map(entry => ({
-    name: entry.entryName,
-    data: entry.getData().toString('base64'),
-    mime: guessMime(entry.entryName),
-  }));
-}
 
 function guessMime(name) {
   const ext = path.extname(name).toLowerCase();
@@ -145,7 +128,64 @@ function guessMime(name) {
   return map[ext] || 'image/jpeg';
 }
 
-// ---- PDF: just send raw data, renderer will use pdf.js ----
+function isImageFile(name) {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTS.some(ext => lower.endsWith(ext));
+}
+
+// CBZ/ZIP
+function readCBZ(filePath) {
+  const zip = new AdmZip(filePath);
+  const entries = zip.getEntries()
+    .filter(e => !e.isDirectory && isImageFile(e.entryName))
+    .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true }));
+
+  return entries.map(entry => ({
+    name: entry.entryName,
+     entry.getData().toString('base64'),
+    mime: guessMime(entry.entryName),
+  }));
+}
+
+// CBR/RAR (pure JS via node-unrar-js - NO native deps!)
+async function readCBR(filePath) {
+  try {
+    const extractor = await createExtractorFromFile({ filepath: filePath });
+    const list = extractor.getFileList();
+    const fileHeaders = Array.from(list.fileHeaders);
+    
+    // Filter and sort image files
+    const imageFiles = fileHeaders
+      .filter(h => !h.flags.directory && isImageFile(h.name))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    
+    if (imageFiles.length === 0) {
+      throw new Error('Nenhuma imagem encontrada no arquivo RAR.');
+    }
+    
+    // Extract all images
+    const extracted = extractor.extract({ files: imageFiles.map(h => h.name) });
+    const files = Array.from(extracted.files);
+    
+    return files.map(file => ({
+      name: file.fileHeader.name,
+       Buffer.from(file.extraction).toString('base64'),
+      mime: guessMime(file.fileHeader.name),
+    }));
+  } catch (error) {
+    console.error('CBR read error:', error);
+    throw new Error(`Erro ao ler CBR: ${error.message}. O arquivo pode estar corrompido ou usar RAR5 (converta para CBZ com 7-Zip).`);
+  }
+}
+
+// CBT/TAR
+async function readCBT(filePath) {
+  // tar module works with streams, need to read file first
+  // For simplicity, use a basic approach
+  throw new Error('Formato CBT/TAR ainda não suportado. Converta para CBZ.');
+}
+
+// PDF: send raw data, renderer will use pdf.js
 function readPDF(filePath) {
   const buf = fs.readFileSync(filePath);
   return buf.toString('base64');
@@ -169,25 +209,29 @@ ipcMain.handle('book:open', async (_e, filePath) => {
     return { type: 'pdf', data, path: filePath };
   }
 
-  if (['.cbz', '.zip'].includes(ext)) {
+  if (ext === '.cbz' || ext === '.zip') {
     const pages = readCBZ(filePath);
     return { type: 'cbz', pages, path: filePath };
   }
 
-  if (['.cbt', '.tar', '.tgz'].includes(ext) || ext.endsWith('.tar.gz')) {
-    // TAR support - list files, extract images
-    // For simplicity, return an error for now
-    throw new Error('Formato TAR/CBT ainda não suportado nesta versão. Converta para CBZ.');
+  if (ext === '.cbr' || ext === '.rar') {
+    const pages = await readCBR(filePath);
+    return { type: 'cbr', pages, path: filePath };
   }
 
-  throw new Error(`Formato não suportado: ${ext}. Use .cbz, .zip ou .pdf`);
+  if (ext === '.cbt' || ext === '.tar') {
+    const pages = await readCBT(filePath);
+    return { type: 'cbt', pages, path: filePath };
+  }
+
+  throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip ou .pdf`);
 });
 
 ipcMain.handle('dialog:openFiles', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'Livros', extensions: ['cbz', 'zip', 'pdf', 'cbr', 'cbt', 'cb7'] },
+      { name: 'Livros', extensions: ['cbz', 'cbr', 'zip', 'rar', 'pdf', 'cbt', 'tar'] },
       { name: 'Todos', extensions: ['*'] },
     ],
   });
@@ -219,7 +263,7 @@ ipcMain.handle('shell:openExternal', (_e, url) => {
   return true;
 });
 
-// Keep awake (power save blocker)
+// Keep awake
 let powerSaveBlockerId = null;
 const { powerSaveBlocker } = require('electron');
 
@@ -233,7 +277,7 @@ ipcMain.handle('power:keepAwake', (_e, on) => {
   return powerSaveBlockerId !== null;
 });
 
-// AI integration (runs in main process to bypass CORS)
+// AI integration
 ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
   const baseUrl = settings.aiBaseUrl ||
     (settings.aiProvider === 'qwen'

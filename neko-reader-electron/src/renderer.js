@@ -357,11 +357,15 @@ function removeClickZones() { zones.forEach(z => z.remove()); zones = []; }
   e.preventDefault(); el.dropzone.classList.remove('dragover');
 }));
 el.dropzone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   const f = e.dataTransfer.files && e.dataTransfer.files[0];
   if (!f) return;
   const p = f.path; // Electron exposes .path
   if (/\.(cbz|cbr|cbt|cb7|zip|rar|7z|tar|pdf)$/i.test(p)) {
     openPath(p);
+  } else {
+    showError('Formato não suportado. Use .cbz, .cbr, .zip ou .pdf');
   }
 });
 
