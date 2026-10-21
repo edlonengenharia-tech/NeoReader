@@ -1,8 +1,8 @@
 {
   "name": "neko-reader",
   "productName": "NekoReader",
-  "version": "2.0.0",
-  "description": "Leitor de quadrinhos e mangas (CBZ/CBR/CBT/CB7/PDF) - Electron, sem dependências nativas problemáticas",
+  "version": "2.1.0",
+  "description": "Leitor de quadrinhos e mangas (CBZ/CBR/PDF) - Electron, sem dependências nativas problemáticas",
   "main": "src/main.js",
   "author": "NekoReader",
   "license": "MIT",
@@ -16,8 +16,7 @@
   "dependencies": {
     "adm-zip": "^0.5.16",
     "node-unrar-js": "^2.0.2",
-    "pdfjs-dist": "^3.11.174",
-    "tar": "^6.2.1"
+    "pdfjs-dist": "^3.11.174"
   },
   "devDependencies": {
     "electron": "^31.7.7",

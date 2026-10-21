@@ -1,10 +1,8 @@
-// NekoReader - Main process
-// NO native canvas dependency! PDF rendering happens in the renderer process.
-const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
+// NekoReader - Main process (Clean version)
+const { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
-const tar = require('tar');
 const { createExtractorFromData } = require('node-unrar-js');
 
 // ---- State persistence ----
@@ -24,7 +22,6 @@ function loadState() {
       doublePageByDefault: false,
       fit: 'width',
       flipAnimation: true,
-      prefetch: 3,
       clickZones: true,
       showLibraryOnStart: true,
       sidebarWidth: 300,
@@ -87,7 +84,7 @@ if (!gotLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-      const fileArg = argv.find(a => /\.(cbz|cbr|cbt|cb7|zip|rar|7z|tar|pdf)$/i.test(a));
+      const fileArg = argv.find(a => /\.(cbz|cbr|zip|rar|pdf)$/i.test(a));
       if (fileArg && mainWindow) {
         mainWindow.webContents.once('did-finish-load', () => {
           mainWindow.webContents.send('open-path', fileArg);
@@ -99,7 +96,7 @@ if (!gotLock) {
 
 app.whenReady().then(() => {
   createWindow();
-  const fileArg = process.argv.find(a => /\.(cbz|cbr|cbt|cb7|zip|rar|7z|tar|pdf)$/i.test(a));
+  const fileArg = process.argv.find(a => /\.(cbz|cbr|zip|rar|pdf)$/i.test(a));
   if (fileArg && mainWindow) {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow.webContents.send('open-path', fileArg);
@@ -115,7 +112,7 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// ---- Archive reading ----
+// ---- File format detection ----
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 
 function guessMime(name) {
@@ -133,7 +130,7 @@ function isImageFile(name) {
   return IMAGE_EXTS.some(ext => lower.endsWith(ext));
 }
 
-// Detecta o formato real do arquivo pelos bytes iniciais
+// Detecta o formato real do arquivo pelos bytes iniciais (magic number)
 function detectFileFormat(filePath) {
   try {
     const buffer = Buffer.alloc(8);
@@ -156,11 +153,6 @@ function detectFileFormat(filePath) {
       return 'rar';
     }
     
-    // 7Z: 7z (0x37 0x7A 0xBC 0xAF)
-    if (buffer[0] === 0x37 && buffer[1] === 0x7A && buffer[2] === 0xBC && buffer[3] === 0xAF) {
-      return '7z';
-    }
-    
     return 'unknown';
   } catch (error) {
     console.error('[detectFileFormat] Erro:', error);
@@ -168,38 +160,44 @@ function detectFileFormat(filePath) {
   }
 }
 
+// ---- Archive reading functions ----
+
 // CBZ/ZIP
 function readCBZ(filePath) {
-  const zip = new AdmZip(filePath);
-  const entries = zip.getEntries()
-    .filter(e => !e.isDirectory && isImageFile(e.entryName))
-    .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true }));
+  try {
+    const zip = new AdmZip(filePath);
+    const entries = zip.getEntries()
+      .filter(e => !e.isDirectory && isImageFile(e.entryName))
+      .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true }));
 
-  return entries.map(entry => ({
-    name: entry.entryName,
-    data: entry.getData().toString('base64'),
-    mime: guessMime(entry.entryName),
-  }));
+    if (entries.length === 0) {
+      throw new Error('Nenhuma imagem encontrada no arquivo ZIP.');
+    }
+
+    return entries.map(entry => ({
+      name: entry.entryName,
+      data: entry.getData().toString('base64'),
+      mime: guessMime(entry.entryName),
+    }));
+  } catch (error) {
+    console.error('[readCBZ] Erro:', error);
+    throw error;
+  }
 }
 
-// CBR/RAR (pure JS via node-unrar-js - NO native deps!)
+// CBR/RAR
 async function readCBR(filePath) {
   try {
-    // Read file as ArrayBuffer
     const fileBuffer = fs.readFileSync(filePath);
     const arrayBuffer = fileBuffer.buffer.slice(
       fileBuffer.byteOffset,
       fileBuffer.byteOffset + fileBuffer.byteLength
     );
 
-    // Create extractor from data (in-memory extraction)
     const extractor = await createExtractorFromData({ data: arrayBuffer });
-    
-    // Get file list
     const list = extractor.getFileList();
     const fileHeaders = Array.from(list.fileHeaders);
     
-    // Filter and sort image files
     const imageFiles = fileHeaders
       .filter(h => !h.flags.directory && isImageFile(h.name))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -208,7 +206,6 @@ async function readCBR(filePath) {
       throw new Error('Nenhuma imagem encontrada no arquivo RAR.');
     }
     
-    // Extract all images
     const extracted = extractor.extract({ files: imageFiles.map(h => h.name) });
     const files = Array.from(extracted.files);
     
@@ -218,20 +215,75 @@ async function readCBR(filePath) {
       mime: guessMime(file.fileHeader.name),
     }));
   } catch (error) {
-    console.error('CBR read error:', error);
-    throw new Error(`Erro ao ler CBR: ${error.message}. O arquivo pode estar corrompido ou usar RAR5 (converta para CBZ com 7-Zip).`);
+    console.error('[readCBR] Erro:', error);
+    throw new Error(`Erro ao ler CBR: ${error.message}`);
   }
 }
 
-// CBT/TAR
-async function readCBT(filePath) {
-  throw new Error('Formato CBT/TAR ainda não suportado. Converta para CBZ.');
-}
-
-// PDF: send raw data, renderer will use pdf.js
+// PDF
 function readPDF(filePath) {
   const buf = fs.readFileSync(filePath);
   return buf.toString('base64');
+}
+
+// ---- Smart file opener with fallback ----
+async function openBookSmart(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const realFormat = detectFileFormat(filePath);
+  
+  console.log('[openBookSmart] Arquivo:', path.basename(filePath));
+  console.log('[openBookSmart] Extensão:', ext, '| Formato detectado:', realFormat);
+
+  // Tenta o formato detectado primeiro
+  if (realFormat === 'pdf') {
+    console.log('[openBookSmart] Lendo como PDF');
+    const data = readPDF(filePath);
+    return { type: 'pdf', data: data, path: filePath };
+  }
+
+  if (realFormat === 'zip') {
+    console.log('[openBookSmart] Lendo como ZIP/CBZ');
+    const pages = readCBZ(filePath);
+    return { type: 'cbz', pages: pages, path: filePath };
+  }
+
+  if (realFormat === 'rar') {
+    console.log('[openBookSmart] Lendo como RAR/CBR');
+    const pages = await readCBR(filePath);
+    return { type: 'cbr', pages: pages, path: filePath };
+  }
+
+  // Se formato desconhecido, tenta baseado na extensão
+  console.log('[openBookSmart] Formato desconhecido, tentando pela extensão');
+  
+  if (ext === '.pdf') {
+    const data = readPDF(filePath);
+    return { type: 'pdf', data: data, path: filePath };
+  }
+
+  if (ext === '.cbz' || ext === '.zip') {
+    try {
+      const pages = readCBZ(filePath);
+      return { type: 'cbz', pages: pages, path: filePath };
+    } catch (zipError) {
+      console.log('[openBookSmart] Falha como ZIP, tentando como RAR');
+      const pages = await readCBR(filePath);
+      return { type: 'cbr', pages: pages, path: filePath };
+    }
+  }
+
+  if (ext === '.cbr' || ext === '.rar') {
+    try {
+      const pages = await readCBR(filePath);
+      return { type: 'cbr', pages: pages, path: filePath };
+    } catch (rarError) {
+      console.log('[openBookSmart] Falha como RAR, tentando como ZIP');
+      const pages = readCBZ(filePath);
+      return { type: 'cbz', pages: pages, path: filePath };
+    }
+  }
+
+  throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip, .rar ou .pdf`);
 }
 
 // ---- IPC handlers ----
@@ -245,46 +297,10 @@ ipcMain.handle('state:set', (_e, partial) => {
 });
 
 ipcMain.handle('book:open', async (_e, filePath) => {
-  const ext = path.extname(filePath).toLowerCase();
-  const realFormat = detectFileFormat(filePath);
-  
-  console.log('[book:open] Tentando abrir:', filePath);
-  console.log('[book:open] Extensão:', ext, '| Formato real:', realFormat);
-
   try {
-    // Usa o formato real se detectado, senão usa a extensão
-    const format = realFormat !== 'unknown' ? realFormat : 
-                   (ext === '.pdf' ? 'pdf' : 
-                    ext === '.cbz' || ext === '.zip' ? 'zip' :
-                    ext === '.cbr' || ext === '.rar' ? 'rar' : 'unknown');
-
-    if (format === 'pdf') {
-      console.log('[book:open] Usando readPDF');
-      const data = readPDF(filePath);
-      return { type: 'pdf', data: data, path: filePath };
-    }
-
-    if (format === 'zip') {
-      console.log('[book:open] Usando readCBZ');
-      const pages = readCBZ(filePath);
-      return { type: 'cbz', pages: pages, path: filePath };
-    }
-
-    if (format === 'rar') {
-      console.log('[book:open] Usando readCBR');
-      const pages = await readCBR(filePath);
-      return { type: 'cbr', pages: pages, path: filePath };
-    }
-
-    if (ext === '.cbt' || ext === '.tar') {
-      console.log('[book:open] Usando readCBT');
-      const pages = await readCBT(filePath);
-      return { type: 'cbt', pages: pages, path: filePath };
-    }
-
-    throw new Error(`Formato não suportado: ${ext} (detectado: ${realFormat}). Use .cbz, .cbr, .zip ou .pdf`);
+    return await openBookSmart(filePath);
   } catch (error) {
-    console.error('[book:open] Erro ao abrir arquivo:', error);
+    console.error('[book:open] Erro final:', error);
     throw error;
   }
 });
@@ -293,7 +309,7 @@ ipcMain.handle('dialog:openFiles', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'Livros', extensions: ['cbz', 'cbr', 'zip', 'rar', 'pdf', 'cbt', 'tar'] },
+      { name: 'Livros', extensions: ['cbz', 'cbr', 'zip', 'rar', 'pdf'] },
       { name: 'Todos', extensions: ['*'] },
     ],
   });
@@ -327,7 +343,6 @@ ipcMain.handle('shell:openExternal', (_e, url) => {
 
 // Keep awake
 let powerSaveBlockerId = null;
-const { powerSaveBlocker } = require('electron');
 
 ipcMain.handle('power:keepAwake', (_e, on) => {
   if (on && powerSaveBlockerId === null) {
@@ -372,7 +387,7 @@ ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
 
 ipcMain.handle('ai:test', async (_e, settings) => {
   try {
-    const result = await ipcMain.emit('ai:ask', null, {
+    const result = await ipcMain.invoke('ai:ask', {
       messages: [{ role: 'user', content: 'Diga olá em uma frase curta.' }],
       settings: settings,
     });
