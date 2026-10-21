@@ -116,7 +116,7 @@ function App() {
         </header>
       )}
 
-      <input ref={fileInputRef} type="file" accept=".cbz,.zip,.pdf" className="hidden" onChange={handleFileSelect} />
+      <input ref={fileInputRef} type="file" accept=".cbz,.zip,.cbr,.rar,.pdf" className="hidden" onChange={handleFileSelect} />
 
       {/* Main Area */}
       <div className="flex flex-1 min-h-0">

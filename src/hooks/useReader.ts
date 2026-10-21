@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Settings, ReadPosition, LibraryItem, loadSettings, saveSettings, loadPositions, savePositions } from '../utils/storage';
-import { openCBZ, isArchiveFile, isPDFFile } from '../utils/archive';
+import { openCBZ, openCBR, isArchiveFile, isCBRFile, isPDFFile } from '../utils/archive';
 import { openPDF } from '../utils/pdf';
 
 export interface PageData {
@@ -63,14 +63,18 @@ export function useReader() {
     try {
       let pages: PageData[];
 
-      if (isArchiveFile(file)) {
+      if (isCBRFile(file)) {
+        setLoadingProgress(10);
+        pages = await openCBR(file);
+        setLoadingProgress(100);
+      } else if (isArchiveFile(file)) {
         setLoadingProgress(10);
         pages = await openCBZ(file);
         setLoadingProgress(100);
       } else if (isPDFFile(file)) {
         pages = await openPDF(file, (p) => setLoadingProgress(p));
       } else {
-        throw new Error('Formato não suportado. Use .cbz, .zip ou .pdf');
+        throw new Error('Formato não suportado. Use .cbz, .cbr, .zip, .rar ou .pdf');
       }
 
       if (pages.length === 0) {
@@ -104,7 +108,7 @@ export function useReader() {
           id: bookId,
           name: file.name,
           file,
-          type: isPDFFile(file) ? 'pdf' : 'cbz',
+          type: isPDFFile(file) ? 'pdf' : isCBRFile(file) ? 'cbr' : 'cbz',
           lastOpened: Date.now(),
         };
         const next = [item, ...prev.filter(i => i.id !== bookId)];

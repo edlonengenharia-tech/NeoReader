@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "start": "vite build && electron .",
+    "dist": "vite build && electron-builder --win portable"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
@@ -34,6 +36,34 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.7.0",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "description": "Leitor de manga, HQ, livros e PDFs",
+  "author": "Edlon Engenharia",
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "br.com.edlon.nekoreader",
+    "productName": "NekoReader",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-unrar-js/**"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "NekoReader-Portable-${version}.exe"
+    }
   }
 }
