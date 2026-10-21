@@ -1,11 +1,9 @@
 @echo off
-chcp 65001 >nul
 echo ============================================
 echo   NekoReader - Gerar EXE Portatil
 echo ============================================
 echo.
 
-:: Check Node.js
 where node >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERRO] Node.js nao encontrado!
@@ -18,9 +16,7 @@ echo [1/4] Node.js encontrado:
 node --version
 echo.
 
-:: Install dependencies
 echo [2/4] Instalando dependencias...
-echo        (Sem canvas nativo - usa PDF.js no renderer)
 call npm install
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -31,16 +27,18 @@ if %ERRORLEVEL% neq 0 (
 echo        OK!
 echo.
 
-:: Build portable EXE
 echo [3/4] Gerando EXE portatil (electron-builder)...
 echo        Isso pode levar alguns minutos...
 echo.
 
+set CSC_IDENTITY_AUTO_DISCOVERY=false
 call npx electron-builder --win portable --x64
 if %ERRORLEVEL% neq 0 (
     echo.
     echo [ERRO] Falha ao gerar EXE!
-    echo Verifique se electron-builder esta instalado corretamente.
+    echo.
+    echo Tente executar o CMD como Administrador.
+    echo Ou use: npx electron-builder --win dir --x64
     pause
     exit /b 1
 )
@@ -52,11 +50,12 @@ echo ============================================
 echo   EXE gerado em: dist\NekoReader-portable.exe
 echo ============================================
 echo.
-echo Voce pode copiar esse arquivo para qualquer
-echo lugar e executar sem instalacao!
-echo.
 
-:: Open dist folder
-explorer dist
+if exist "dist\NekoReader-portable.exe" (
+    echo Abrindo pasta dist...
+    explorer dist
+) else (
+    echo [AVISO] EXE nao encontrado. Verifique a pasta dist.
+)
 
 pause
