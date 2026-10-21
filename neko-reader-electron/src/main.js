@@ -1,4 +1,4 @@
-// NekoReader - Main process (v2.2 - Fixed)
+// NekoReader - Main process (v2.3 - Fixed)
 const { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -144,7 +144,6 @@ function isImageFile(name) {
   return IMAGE_EXTS.some(ext => lower.endsWith(ext));
 }
 
-// Detecta o formato real do arquivo pelos bytes iniciais (magic number)
 function detectFileFormat(filePath) {
   try {
     const buffer = Buffer.alloc(8);
@@ -152,21 +151,15 @@ function detectFileFormat(filePath) {
     fs.readSync(fd, buffer, 0, 8, 0);
     fs.closeSync(fd);
 
-    // PDF: %PDF
     if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
       return 'pdf';
     }
-    
-    // ZIP/CBZ: PK (0x50 0x4B)
     if (buffer[0] === 0x50 && buffer[1] === 0x4B) {
       return 'zip';
     }
-    
-    // RAR: Rar! (0x52 0x61 0x72 0x21)
     if (buffer[0] === 0x52 && buffer[1] === 0x61 && buffer[2] === 0x72 && buffer[3] === 0x21) {
       return 'rar';
     }
-    
     return 'unknown';
   } catch (error) {
     console.error('[detectFileFormat] Erro:', error);
@@ -176,7 +169,6 @@ function detectFileFormat(filePath) {
 
 // ---- Archive reading functions ----
 
-// CBZ/ZIP
 function readCBZ(filePath) {
   try {
     console.log('[readCBZ] Iniciando leitura de:', path.basename(filePath));
@@ -191,11 +183,19 @@ function readCBZ(filePath) {
       throw new Error('Nenhuma imagem encontrada no arquivo ZIP.');
     }
 
-    const result = entries.map(entry => ({
-      name: entry.entryName,
-       entry.getData().toString('base64'),
-      mime: guessMime(entry.entryName),
-    }));
+    const result = [];
+    for (const entry of entries) {
+      const entryName = entry.entryName;
+      const entryData = entry.getData().toString('base64');
+      const entryMime = guessMime(entry.entryName);
+      
+      const pageData = {};
+      pageData.name = entryName;
+      pageData.data = entryData;
+      pageData.mime = entryMime;
+      
+      result.push(pageData);
+    }
     
     console.log('[readCBZ] Leitura concluída, páginas:', result.length);
     return result;
@@ -205,7 +205,6 @@ function readCBZ(filePath) {
   }
 }
 
-// CBR/RAR
 async function readCBR(filePath) {
   try {
     console.log('[readCBR] Iniciando leitura de:', path.basename(filePath));
@@ -219,7 +218,7 @@ async function readCBR(filePath) {
     );
 
     console.log('[readCBR] Criando extractor...');
-    const extractor = await createExtractorFromData({  arrayBuffer });
+    const extractor = await createExtractorFromData({ data: arrayBuffer });
     console.log('[readCBR] Extractor criado com sucesso');
     
     console.log('[readCBR] Obtendo lista de arquivos...');
@@ -244,11 +243,19 @@ async function readCBR(filePath) {
     const files = Array.from(extracted.files);
     console.log('[readCBR] Imagens extraídas:', files.length);
     
-    const result = files.map(file => ({
-      name: file.fileHeader.name,
-       Buffer.from(file.extraction).toString('base64'),
-      mime: guessMime(file.fileHeader.name),
-    }));
+    const result = [];
+    for (const file of files) {
+      const fileName = file.fileHeader.name;
+      const fileData = Buffer.from(file.extraction).toString('base64');
+      const fileMime = guessMime(file.fileHeader.name);
+      
+      const pageData = {};
+      pageData.name = fileName;
+      pageData.data = fileData;
+      pageData.mime = fileMime;
+      
+      result.push(pageData);
+    }
     
     console.log('[readCBR] Leitura concluída com sucesso, páginas:', result.length);
     return result;
@@ -259,7 +266,6 @@ async function readCBR(filePath) {
   }
 }
 
-// PDF
 function readPDF(filePath) {
   console.log('[readPDF] Iniciando leitura de:', path.basename(filePath));
   const buf = fs.readFileSync(filePath);
@@ -276,11 +282,10 @@ async function openBookSmart(filePath) {
   console.log('[openBookSmart] Extensão:', ext, '| Formato detectado:', realFormat);
 
   try {
-    // Tenta o formato detectado primeiro
     if (realFormat === 'pdf') {
       console.log('[openBookSmart] Lendo como PDF');
-      const data = readPDF(filePath);
-      return { type: 'pdf',  data, path: filePath };
+      const pdfData = readPDF(filePath);
+      return { type: 'pdf', data: pdfData, path: filePath };
     }
 
     if (realFormat === 'zip') {
@@ -295,12 +300,11 @@ async function openBookSmart(filePath) {
       return { type: 'cbr', pages: pages, path: filePath };
     }
 
-    // Se formato desconhecido, tenta baseado na extensão
     console.log('[openBookSmart] Formato desconhecido, tentando pela extensão');
     
     if (ext === '.pdf') {
-      const data = readPDF(filePath);
-      return { type: 'pdf',  data, path: filePath };
+      const pdfData = readPDF(filePath);
+      return { type: 'pdf', data: pdfData, path: filePath };
     }
 
     if (ext === '.cbz' || ext === '.zip') {
@@ -346,7 +350,7 @@ ipcMain.handle('book:open', async (_e, filePath) => {
   console.log('[book:open] Recebido:', filePath);
   try {
     const result = await openBookSmart(filePath);
-    console.log('[book:open] Sucesso, tipo:', result.type, 'páginas:', result.pages?.length || 'N/A');
+    console.log('[book:open] Sucesso, tipo:', result.type, 'páginas:', result.pages ? result.pages.length : 'N/A');
     return result;
   } catch (error) {
     console.error('[book:open] Erro:', error);
@@ -372,7 +376,6 @@ ipcMain.handle('dialog:openFolder', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-// Window controls
 ipcMain.on('win:minimize', () => mainWindow?.minimize());
 ipcMain.on('win:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
@@ -393,7 +396,6 @@ ipcMain.handle('shell:openExternal', (_e, url) => {
   return true;
 });
 
-// Keep awake
 let powerSaveBlockerId = null;
 
 ipcMain.handle('power:keepAwake', (_e, on) => {
@@ -406,7 +408,6 @@ ipcMain.handle('power:keepAwake', (_e, on) => {
   return powerSaveBlockerId !== null;
 });
 
-// AI integration
 ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
   const baseUrl = settings.aiBaseUrl ||
     (settings.aiProvider === 'qwen'
@@ -433,8 +434,8 @@ ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
     throw new Error(`AI error ${resp.status}: ${text.slice(0, 200)}`);
   }
 
-  const data = await resp.json();
-  return data.choices?.[0]?.message?.content || 'Sem resposta.';
+  const aiData = await resp.json();
+  return aiData.choices?.[0]?.message?.content || 'Sem resposta.';
 });
 
 ipcMain.handle('ai:test', async (_e, settings) => {
