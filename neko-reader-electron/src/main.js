@@ -133,6 +133,41 @@ function isImageFile(name) {
   return IMAGE_EXTS.some(ext => lower.endsWith(ext));
 }
 
+// Detecta o formato real do arquivo pelos bytes iniciais
+function detectFileFormat(filePath) {
+  try {
+    const buffer = Buffer.alloc(8);
+    const fd = fs.openSync(filePath, 'r');
+    fs.readSync(fd, buffer, 0, 8, 0);
+    fs.closeSync(fd);
+
+    // PDF: %PDF
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return 'pdf';
+    }
+    
+    // ZIP/CBZ: PK (0x50 0x4B)
+    if (buffer[0] === 0x50 && buffer[1] === 0x4B) {
+      return 'zip';
+    }
+    
+    // RAR: Rar! (0x52 0x61 0x72 0x21)
+    if (buffer[0] === 0x52 && buffer[1] === 0x61 && buffer[2] === 0x72 && buffer[3] === 0x21) {
+      return 'rar';
+    }
+    
+    // 7Z: 7z (0x37 0x7A 0xBC 0xAF)
+    if (buffer[0] === 0x37 && buffer[1] === 0x7A && buffer[2] === 0xBC && buffer[3] === 0xAF) {
+      return '7z';
+    }
+    
+    return 'unknown';
+  } catch (error) {
+    console.error('[detectFileFormat] Erro:', error);
+    return 'unknown';
+  }
+}
+
 // CBZ/ZIP
 function readCBZ(filePath) {
   const zip = new AdmZip(filePath);
@@ -211,28 +246,47 @@ ipcMain.handle('state:set', (_e, partial) => {
 
 ipcMain.handle('book:open', async (_e, filePath) => {
   const ext = path.extname(filePath).toLowerCase();
+  const realFormat = detectFileFormat(filePath);
+  
+  console.log('[book:open] Tentando abrir:', filePath);
+  console.log('[book:open] Extensão:', ext, '| Formato real:', realFormat);
 
-  if (ext === '.pdf') {
-    const data = readPDF(filePath);
-    return { type: 'pdf', data: data, path: filePath };
+  try {
+    // Usa o formato real se detectado, senão usa a extensão
+    const format = realFormat !== 'unknown' ? realFormat : 
+                   (ext === '.pdf' ? 'pdf' : 
+                    ext === '.cbz' || ext === '.zip' ? 'zip' :
+                    ext === '.cbr' || ext === '.rar' ? 'rar' : 'unknown');
+
+    if (format === 'pdf') {
+      console.log('[book:open] Usando readPDF');
+      const data = readPDF(filePath);
+      return { type: 'pdf', data: data, path: filePath };
+    }
+
+    if (format === 'zip') {
+      console.log('[book:open] Usando readCBZ');
+      const pages = readCBZ(filePath);
+      return { type: 'cbz', pages: pages, path: filePath };
+    }
+
+    if (format === 'rar') {
+      console.log('[book:open] Usando readCBR');
+      const pages = await readCBR(filePath);
+      return { type: 'cbr', pages: pages, path: filePath };
+    }
+
+    if (ext === '.cbt' || ext === '.tar') {
+      console.log('[book:open] Usando readCBT');
+      const pages = await readCBT(filePath);
+      return { type: 'cbt', pages: pages, path: filePath };
+    }
+
+    throw new Error(`Formato não suportado: ${ext} (detectado: ${realFormat}). Use .cbz, .cbr, .zip ou .pdf`);
+  } catch (error) {
+    console.error('[book:open] Erro ao abrir arquivo:', error);
+    throw error;
   }
-
-  if (ext === '.cbz' || ext === '.zip') {
-    const pages = readCBZ(filePath);
-    return { type: 'cbz', pages: pages, path: filePath };
-  }
-
-  if (ext === '.cbr' || ext === '.rar') {
-    const pages = await readCBR(filePath);
-    return { type: 'cbr', pages: pages, path: filePath };
-  }
-
-  if (ext === '.cbt' || ext === '.tar') {
-    const pages = await readCBT(filePath);
-    return { type: 'cbt', pages: pages, path: filePath };
-  }
-
-  throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip ou .pdf`);
 });
 
 ipcMain.handle('dialog:openFiles', async () => {
