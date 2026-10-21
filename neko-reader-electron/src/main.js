@@ -142,7 +142,7 @@ function readCBZ(filePath) {
 
   return entries.map(entry => ({
     name: entry.entryName,
-     entry.getData().toString('base64'),
+    data: entry.getData().toString('base64'),
     mime: guessMime(entry.entryName),
   }));
 }
@@ -179,7 +179,7 @@ async function readCBR(filePath) {
     
     return files.map(file => ({
       name: file.fileHeader.name,
-       Buffer.from(file.extraction).toString('base64'),
+      data: Buffer.from(file.extraction).toString('base64'),
       mime: guessMime(file.fileHeader.name),
     }));
   } catch (error) {
@@ -213,23 +213,23 @@ ipcMain.handle('book:open', async (_e, filePath) => {
   const ext = path.extname(filePath).toLowerCase();
 
   if (ext === '.pdf') {
-    const  readPDF(filePath);
-    return { type: 'pdf', data, path: filePath };
+    const data = readPDF(filePath);
+    return { type: 'pdf', data: data, path: filePath };
   }
 
   if (ext === '.cbz' || ext === '.zip') {
     const pages = readCBZ(filePath);
-    return { type: 'cbz', pages, path: filePath };
+    return { type: 'cbz', pages: pages, path: filePath };
   }
 
   if (ext === '.cbr' || ext === '.rar') {
     const pages = await readCBR(filePath);
-    return { type: 'cbr', pages, path: filePath };
+    return { type: 'cbr', pages: pages, path: filePath };
   }
 
   if (ext === '.cbt' || ext === '.tar') {
     const pages = await readCBT(filePath);
-    return { type: 'cbt', pages, path: filePath };
+    return { type: 'cbt', pages: pages, path: filePath };
   }
 
   throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip ou .pdf`);
@@ -301,8 +301,8 @@ ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
       ...(settings.aiKey ? { 'Authorization': `Bearer ${settings.aiKey}` } : {}),
     },
     body: JSON.stringify({
-      model,
-      messages,
+      model: model,
+      messages: messages,
       temperature: 0.7,
     }),
   });
@@ -312,7 +312,7 @@ ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
     throw new Error(`AI error ${resp.status}: ${text.slice(0, 200)}`);
   }
 
-  const  await resp.json();
+  const data = await resp.json();
   return data.choices?.[0]?.message?.content || 'Sem resposta.';
 });
 
@@ -320,7 +320,7 @@ ipcMain.handle('ai:test', async (_e, settings) => {
   try {
     const result = await ipcMain.emit('ai:ask', null, {
       messages: [{ role: 'user', content: 'Diga olá em uma frase curta.' }],
-      settings,
+      settings: settings,
     });
     return result;
   } catch (e) {
