@@ -37,8 +37,14 @@ let filter = 'all';
 const FIT_LABEL = { width: 'Largura', height: 'Altura', page: 'Página' };
 
 // ---- RTL helpers ----
-const phys = (v) => manga ? (book.count - 1 - v) : v;
-const disp = (p) => manga ? (book.count - 1 - p) : p;
+const phys = (v) => {
+  if (!book) return 0;
+  return manga ? (book.count - 1 - v) : v;
+};
+const disp = (p) => {
+  if (!book) return 0;
+  return manga ? (book.count - 1 - p) : p;
+};
 
 // ---- Persistence ----
 async function loadState() {
@@ -74,8 +80,8 @@ async function openPath(filePath) {
     const info = await neko.openBook(filePath);
     const fileName = filePath.split(/[\\/]/).pop();
 
-    if (info.type === 'cbz') {
-      // CBZ: pages are base64 images
+    if (info.type === 'cbz' || info.type === 'cbr') {
+      // CBZ/CBR: pages are base64 images
       book = {
         file: filePath,
         name: fileName,
@@ -93,11 +99,13 @@ async function openPath(filePath) {
       };
       await renderPDFPages(info.data);
       hideLoading();
+    } else {
+      throw new Error(`Tipo de arquivo não suportado: ${info.type}`);
     }
 
     el.bookTitle.textContent = fileName;
     const pos = positions[filePath];
-    view = pos ? Math.min(Math.max(0, disp(pos.page)), book.count - 1) : 0;
+    view = pos && book ? Math.min(Math.max(0, disp(pos.page)), book.count - 1) : 0;
 
     el.empty.hidden = true;
     el.pages.hidden = false;

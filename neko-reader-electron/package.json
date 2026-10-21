@@ -1,7 +1,7 @@
 {
   "name": "neko-reader",
   "productName": "NekoReader",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Leitor de quadrinhos e mangas (CBZ/CBR/PDF) - Electron, sem dependências nativas problemáticas",
   "main": "src/main.js",
   "author": "NekoReader",

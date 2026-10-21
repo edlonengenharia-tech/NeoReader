@@ -1,4 +1,4 @@
-// NekoReader - Main process (Clean version)
+// NekoReader - Main process (v2.2 - Fixed)
 const { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -104,8 +104,22 @@ app.whenReady().then(() => {
   }
 });
 
+// ---- App lifecycle ----
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  console.log('[app] window-all-closed - fechando app');
+  if (powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    powerSaveBlockerId = null;
+  }
+  app.quit();
+});
+
+app.on('before-quit', () => {
+  console.log('[app] before-quit - limpando recursos');
+  if (powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    powerSaveBlockerId = null;
+  }
 });
 
 app.on('activate', () => {
@@ -165,20 +179,26 @@ function detectFileFormat(filePath) {
 // CBZ/ZIP
 function readCBZ(filePath) {
   try {
+    console.log('[readCBZ] Iniciando leitura de:', path.basename(filePath));
     const zip = new AdmZip(filePath);
     const entries = zip.getEntries()
       .filter(e => !e.isDirectory && isImageFile(e.entryName))
       .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true }));
 
+    console.log('[readCBZ] Entradas encontradas:', entries.length);
+
     if (entries.length === 0) {
       throw new Error('Nenhuma imagem encontrada no arquivo ZIP.');
     }
 
-    return entries.map(entry => ({
+    const result = entries.map(entry => ({
       name: entry.entryName,
-      data: entry.getData().toString('base64'),
+       entry.getData().toString('base64'),
       mime: guessMime(entry.entryName),
     }));
+    
+    console.log('[readCBZ] Leitura concluída, páginas:', result.length);
+    return result;
   } catch (error) {
     console.error('[readCBZ] Erro:', error);
     throw error;
@@ -188,41 +208,62 @@ function readCBZ(filePath) {
 // CBR/RAR
 async function readCBR(filePath) {
   try {
+    console.log('[readCBR] Iniciando leitura de:', path.basename(filePath));
+    
     const fileBuffer = fs.readFileSync(filePath);
+    console.log('[readCBR] Arquivo lido, tamanho:', fileBuffer.length, 'bytes');
+    
     const arrayBuffer = fileBuffer.buffer.slice(
       fileBuffer.byteOffset,
       fileBuffer.byteOffset + fileBuffer.byteLength
     );
 
-    const extractor = await createExtractorFromData({ data: arrayBuffer });
+    console.log('[readCBR] Criando extractor...');
+    const extractor = await createExtractorFromData({  arrayBuffer });
+    console.log('[readCBR] Extractor criado com sucesso');
+    
+    console.log('[readCBR] Obtendo lista de arquivos...');
     const list = extractor.getFileList();
     const fileHeaders = Array.from(list.fileHeaders);
+    console.log('[readCBR] Total de arquivos no RAR:', fileHeaders.length);
     
     const imageFiles = fileHeaders
       .filter(h => !h.flags.directory && isImageFile(h.name))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     
+    console.log('[readCBR] Arquivos de imagem encontrados:', imageFiles.length);
+    
     if (imageFiles.length === 0) {
+      console.error('[readCBR] Nenhuma imagem encontrada!');
+      console.log('[readCBR] Arquivos no RAR:', fileHeaders.map(h => h.name).join(', '));
       throw new Error('Nenhuma imagem encontrada no arquivo RAR.');
     }
     
+    console.log('[readCBR] Extraindo imagens...');
     const extracted = extractor.extract({ files: imageFiles.map(h => h.name) });
     const files = Array.from(extracted.files);
+    console.log('[readCBR] Imagens extraídas:', files.length);
     
-    return files.map(file => ({
+    const result = files.map(file => ({
       name: file.fileHeader.name,
-      data: Buffer.from(file.extraction).toString('base64'),
+       Buffer.from(file.extraction).toString('base64'),
       mime: guessMime(file.fileHeader.name),
     }));
+    
+    console.log('[readCBR] Leitura concluída com sucesso, páginas:', result.length);
+    return result;
   } catch (error) {
     console.error('[readCBR] Erro:', error);
+    console.error('[readCBR] Stack:', error.stack);
     throw new Error(`Erro ao ler CBR: ${error.message}`);
   }
 }
 
 // PDF
 function readPDF(filePath) {
+  console.log('[readPDF] Iniciando leitura de:', path.basename(filePath));
   const buf = fs.readFileSync(filePath);
+  console.log('[readPDF] Arquivo lido, tamanho:', buf.length, 'bytes');
   return buf.toString('base64');
 }
 
@@ -234,56 +275,61 @@ async function openBookSmart(filePath) {
   console.log('[openBookSmart] Arquivo:', path.basename(filePath));
   console.log('[openBookSmart] Extensão:', ext, '| Formato detectado:', realFormat);
 
-  // Tenta o formato detectado primeiro
-  if (realFormat === 'pdf') {
-    console.log('[openBookSmart] Lendo como PDF');
-    const data = readPDF(filePath);
-    return { type: 'pdf', data: data, path: filePath };
-  }
-
-  if (realFormat === 'zip') {
-    console.log('[openBookSmart] Lendo como ZIP/CBZ');
-    const pages = readCBZ(filePath);
-    return { type: 'cbz', pages: pages, path: filePath };
-  }
-
-  if (realFormat === 'rar') {
-    console.log('[openBookSmart] Lendo como RAR/CBR');
-    const pages = await readCBR(filePath);
-    return { type: 'cbr', pages: pages, path: filePath };
-  }
-
-  // Se formato desconhecido, tenta baseado na extensão
-  console.log('[openBookSmart] Formato desconhecido, tentando pela extensão');
-  
-  if (ext === '.pdf') {
-    const data = readPDF(filePath);
-    return { type: 'pdf', data: data, path: filePath };
-  }
-
-  if (ext === '.cbz' || ext === '.zip') {
-    try {
-      const pages = readCBZ(filePath);
-      return { type: 'cbz', pages: pages, path: filePath };
-    } catch (zipError) {
-      console.log('[openBookSmart] Falha como ZIP, tentando como RAR');
-      const pages = await readCBR(filePath);
-      return { type: 'cbr', pages: pages, path: filePath };
+  try {
+    // Tenta o formato detectado primeiro
+    if (realFormat === 'pdf') {
+      console.log('[openBookSmart] Lendo como PDF');
+      const data = readPDF(filePath);
+      return { type: 'pdf',  data, path: filePath };
     }
-  }
 
-  if (ext === '.cbr' || ext === '.rar') {
-    try {
-      const pages = await readCBR(filePath);
-      return { type: 'cbr', pages: pages, path: filePath };
-    } catch (rarError) {
-      console.log('[openBookSmart] Falha como RAR, tentando como ZIP');
+    if (realFormat === 'zip') {
+      console.log('[openBookSmart] Lendo como ZIP/CBZ');
       const pages = readCBZ(filePath);
       return { type: 'cbz', pages: pages, path: filePath };
     }
-  }
 
-  throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip, .rar ou .pdf`);
+    if (realFormat === 'rar') {
+      console.log('[openBookSmart] Lendo como RAR/CBR');
+      const pages = await readCBR(filePath);
+      return { type: 'cbr', pages: pages, path: filePath };
+    }
+
+    // Se formato desconhecido, tenta baseado na extensão
+    console.log('[openBookSmart] Formato desconhecido, tentando pela extensão');
+    
+    if (ext === '.pdf') {
+      const data = readPDF(filePath);
+      return { type: 'pdf',  data, path: filePath };
+    }
+
+    if (ext === '.cbz' || ext === '.zip') {
+      try {
+        const pages = readCBZ(filePath);
+        return { type: 'cbz', pages: pages, path: filePath };
+      } catch (zipError) {
+        console.log('[openBookSmart] Falha como ZIP, tentando como RAR');
+        const pages = await readCBR(filePath);
+        return { type: 'cbr', pages: pages, path: filePath };
+      }
+    }
+
+    if (ext === '.cbr' || ext === '.rar') {
+      try {
+        const pages = await readCBR(filePath);
+        return { type: 'cbr', pages: pages, path: filePath };
+      } catch (rarError) {
+        console.log('[openBookSmart] Falha como RAR, tentando como ZIP');
+        const pages = readCBZ(filePath);
+        return { type: 'cbz', pages: pages, path: filePath };
+      }
+    }
+
+    throw new Error(`Formato não suportado: ${ext}. Use .cbz, .cbr, .zip, .rar ou .pdf`);
+  } catch (error) {
+    console.error('[openBookSmart] Erro final:', error);
+    throw error;
+  }
 }
 
 // ---- IPC handlers ----
@@ -297,10 +343,13 @@ ipcMain.handle('state:set', (_e, partial) => {
 });
 
 ipcMain.handle('book:open', async (_e, filePath) => {
+  console.log('[book:open] Recebido:', filePath);
   try {
-    return await openBookSmart(filePath);
+    const result = await openBookSmart(filePath);
+    console.log('[book:open] Sucesso, tipo:', result.type, 'páginas:', result.pages?.length || 'N/A');
+    return result;
   } catch (error) {
-    console.error('[book:open] Erro final:', error);
+    console.error('[book:open] Erro:', error);
     throw error;
   }
 });
@@ -329,7 +378,10 @@ ipcMain.on('win:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();
 });
-ipcMain.on('win:close', () => mainWindow?.close());
+ipcMain.on('win:close', () => {
+  console.log('[win:close] Fechando janela');
+  mainWindow?.close();
+});
 
 ipcMain.handle('win:setFullScreen', (_e, flag) => {
   mainWindow?.setFullScreen(flag);
