@@ -1,9 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title NekoReader - criar executavel
+title NekkoReader - criar executavel
 echo ==========================================
-echo   NekoReader - gerar .exe para Windows
+echo   NekkoReader - gerar .exe para Windows
 echo ==========================================
 echo.
 
