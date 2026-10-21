@@ -1,64 +1,37 @@
-// PDF rendering using pdfjs-dist (browser version, no native canvas needed)
-// NO native dependencies - uses browser's Canvas API!
+// PDF via pdfjs-dist — worker empacotado LOCALMENTE (sem CDN → funciona offline no .exe)
+// e renderização LAZY por página (nada de pré-renderizar o documento inteiro).
 import * as pdfjsLib from 'pdfjs-dist';
+// Vite resolve este import como asset; no build final o worker fica em ./dist, 100% offline.
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// Use the worker from CDN to avoid bundling issues
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
-export interface PDFPage {
-  name: string;
-  dataUrl: string;
-}
+export type PDFDocumentProxy = pdfjsLib.PDFDocumentProxy;
 
-const RENDER_SCALE = 2.0;
+export class PdfDocumentPool {
+  private static doc: PDFDocumentProxy | null = null;
 
-export async function openPDF(
-  file: File,
-  onProgress?: (percent: number) => void
-): Promise<PDFPage[]> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const pages: PDFPage[] = [];
-  const total = pdf.numPages;
-
-  for (let i = 1; i <= total; i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: RENDER_SCALE });
-
-    // Use browser canvas (no native dependency!)
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d')!;
-
-    await page.render({
-      canvasContext: ctx,
-      viewport,
-    } as any).promise;
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-    pages.push({ name: `Page ${i}`, dataUrl });
-
-    // Free memory
-    page.cleanup();
-
-    // Report progress
-    if (onProgress) {
-      onProgress(Math.round((i / total) * 100));
-    }
-
-    // Yield to main thread for large PDFs
-    if (i % 5 === 0) {
-      await new Promise(r => setTimeout(r, 0));
-    }
+  static async load(file: File): Promise<PDFDocumentProxy> {
+    await PdfDocumentPool.destroy();
+    const data = await file.arrayBuffer();
+    PdfDocumentPool.doc = await pdfjsLib.getDocument({ data }).promise;
+    return PdfDocumentPool.doc;
   }
 
-  return pages;
+  static async destroy() {
+    if (PdfDocumentPool.doc) {
+      try {
+        await PdfDocumentPool.doc.destroy();
+      } catch {}
+      PdfDocumentPool.doc = null;
+    }
+  }
 }
 
 export async function getPDFPageCount(file: File): Promise<number> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const count = pdf.numPages;
+  const data = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  const count = doc.numPages;
+  await doc.destroy();
   return count;
 }

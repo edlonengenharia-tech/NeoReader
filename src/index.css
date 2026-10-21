@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* NekoReader - Improved Web Version */
+/* NekkoReader - v3 */
 /* No native dependencies - pure browser APIs */
 
 :root,
@@ -231,3 +231,21 @@ input[type="checkbox"] {
   width: 16px;
   height: 16px;
 }
+
+/* ===== NekkoReader v3 — tokens utilitários (substituem cores hardcoded) ===== */
+.nekko-bg { background: var(--bg); color: var(--text); }
+.nekko-panel { background: var(--bg2); }
+.nekko-pill { background: var(--pill); border: 1px solid var(--line); color: var(--text); }
+.nekko-card { background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+.nekko-card:hover { border-color: var(--accent); box-shadow: 0 8px 24px var(--shadow); }
+.nekko-cover { background: linear-gradient(135deg, var(--line), var(--bg2)); }
+.nekko-gradient { background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.nekko-input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.nekko-input::placeholder { color: var(--muted); }
+.nekko-input:focus { border-color: var(--accent); }

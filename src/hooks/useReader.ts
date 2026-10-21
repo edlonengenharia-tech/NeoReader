@@ -1,25 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Settings, ReadPosition, LibraryItem, loadSettings, saveSettings, loadPositions, savePositions } from '../utils/storage';
-import { openCBZ, openCBR, isArchiveFile, isCBRFile, isPDFFile } from '../utils/archive';
-import { openPDF } from '../utils/pdf';
-
-export interface PageData {
-  name: string;
-  dataUrl: string;
-}
-
-export interface BookState {
-  id: string;
-  name: string;
-  pages: PageData[];
-  count: number;
-}
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Settings, ReadPosition, LibraryItemMeta,
+  loadSettings, saveSettings, loadPositions, savePositions,
+  loadLibrary, saveLibrary,
+} from '../utils/storage';
+import { isPDFFile, isCBRFile } from '../utils/archive';
+import { openBook, closeCurrentBook, BookSession } from '../utils/pageProvider';
 
 export function useReader() {
   const [settings, setSettingsState] = useState<Settings>(loadSettings);
   const [positions, setPositionsState] = useState<Record<string, ReadPosition>>(loadPositions);
-  const [library, setLibraryState] = useState<LibraryItem[]>([]);
-  const [book, setBook] = useState<BookState | null>(null);
+  // Biblioteca agora é PERSISTIDA (corrige a "biblioteca fantasma": antes
+  // saveLibrary existia mas loadLibrary nunca era chamado).
+  const [library, setLibraryState] = useState<LibraryItemMeta[]>(loadLibrary);
+  const [session, setSession] = useState<BookSession | null>(null);
   const [viewIndex, setViewIndex] = useState(0);
   const [manga, setManga] = useState(false);
   const [dblPage, setDblPage] = useState(false);
@@ -32,11 +26,16 @@ export function useReader() {
   const [error, setError] = useState<string | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
 
+  // espelha manga em ref para efeitos sem re-trigger
+  const mangaRef = useRef(manga);
+  useEffect(() => { mangaRef.current = manga; }, [manga]);
+
   useEffect(() => {
     setManga(settings.mangaByDefault);
     setDblPage(settings.doublePageByDefault);
     setFit(settings.fit);
     setSidebarOpen(settings.showLibraryOnStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateSettings = useCallback((partial: Partial<Settings>) => {
@@ -55,199 +54,162 @@ export function useReader() {
     });
   }, []);
 
+  const upsertLibrary = useCallback((item: LibraryItemMeta) => {
+    setLibraryState(prev => {
+      const next = [item, ...prev.filter(i => i.id !== item.id)].slice(0, 200);
+      saveLibrary(next); // persiste de verdade agora
+      return next;
+    });
+  }, []);
+
+  const removeFromLibrary = useCallback((id: string) => {
+    setLibraryState(prev => {
+      const next = prev.filter(i => i.id !== id);
+      saveLibrary(next);
+      return next;
+    });
+  }, []);
+
   const openFile = useCallback(async (file: File) => {
     setLoading(true);
     setError(null);
     setLoadingProgress(0);
 
     try {
-      let pages: PageData[];
+      // LAZY: openBook só lê metadados — nenhuma página é pré-renderizada.
+      const s = await openBook(file, (p) => setLoadingProgress(p));
+      setSession(s);
+      setZoom(1);
 
-      if (isCBRFile(file)) {
-        setLoadingProgress(10);
-        pages = await openCBR(file);
-        setLoadingProgress(100);
-      } else if (isArchiveFile(file)) {
-        setLoadingProgress(10);
-        pages = await openCBZ(file);
-        setLoadingProgress(100);
-      } else if (isPDFFile(file)) {
-        pages = await openPDF(file, (p) => setLoadingProgress(p));
-      } else {
-        throw new Error('Formato não suportado. Use .cbz, .cbr, .zip, .rar ou .pdf');
-      }
-
-      if (pages.length === 0) {
-        throw new Error('Nenhuma página encontrada no arquivo.');
-      }
-
-      const bookId = `${file.name}_${file.size}`;
-      const newBook: BookState = {
+      const bookId = s.meta.id;
+      upsertLibrary({
         id: bookId,
         name: file.name,
-        pages,
-        count: pages.length,
-      };
+        type: isPDFFile(file) ? 'pdf' : isCBRFile(file) ? 'cbr' : 'cbz',
+        size: file.size,
+        lastOpened: Date.now(),
+      });
 
-      setBook(newBook);
-
-      // Restore position
+      // Restore position (com correção de modo mangá)
       const pos = positions[bookId];
-      if (pos) {
-        const restoredView = manga ? (pages.length - 1 - pos.page) : pos.page;
-        setViewIndex(Math.max(0, Math.min(restoredView, pages.length - 1)));
+      if (pos && pos.page >= 0 && pos.page < s.meta.count) {
+        const restoredView = mangaRef.current ? (s.meta.count - 1 - pos.page) : pos.page;
+        setViewIndex(Math.max(0, Math.min(restoredView, s.meta.count - 1)));
       } else {
         setViewIndex(0);
       }
-
-      // Add to library
-      setLibraryState(prev => {
-        const exists = prev.find(i => i.id === bookId);
-        if (exists) return prev;
-        const item: LibraryItem = {
-          id: bookId,
-          name: file.name,
-          file,
-          type: isPDFFile(file) ? 'pdf' : isCBRFile(file) ? 'cbr' : 'cbz',
-          lastOpened: Date.now(),
-        };
-        const next = [item, ...prev.filter(i => i.id !== bookId)];
-        return next;
-      });
-
     } catch (e: any) {
-      setError(e.message || String(e));
+      setError(e?.message || String(e));
     } finally {
       setLoading(false);
     }
-  }, [positions, manga]);
+  }, [positions, upsertLibrary]);
 
   const closeBook = useCallback(() => {
-    setBook(null);
+    closeCurrentBook();
+    setSession(null);
     setViewIndex(0);
+    setZoom(1);
     setError(null);
   }, []);
 
-  // Navigation helpers
-  const phys = useCallback((v: number) => manga ? (book ? book.count - 1 - v : 0) : v, [manga, book]);
-  const disp = useCallback((p: number) => manga ? (book ? book.count - 1 - p : 0) : p, [manga, book]);
+  // Navigation helpers (viewIndex = índice de visualização; phys = físico)
+  const count = session?.meta.count ?? 0;
+  const phys = useCallback((v: number) => (manga && count ? count - 1 - v : v), [manga, count]);
+  const disp = useCallback((p: number) => (manga && count ? count - 1 - p : p), [manga, count]);
 
   const goNext = useCallback(() => {
-    if (!book) return;
+    if (!count) return;
     const step = dblPage ? 2 : 1;
-    setViewIndex(prev => Math.min(prev + step, book.count - 1));
-  }, [book, dblPage]);
+    setViewIndex(prev => Math.min(prev + step, count - 1));
+  }, [count, dblPage]);
 
   const goPrev = useCallback(() => {
-    if (!book) return;
+    if (!count) return;
     const step = dblPage ? 2 : 1;
     setViewIndex(prev => Math.max(0, prev - step));
-  }, [book, dblPage]);
+  }, [count, dblPage]);
 
-  const goFirst = useCallback(() => {
-    setViewIndex(0);
-  }, []);
-
+  const goFirst = useCallback(() => setViewIndex(0), []);
   const goLast = useCallback(() => {
-    if (!book) return;
-    setViewIndex(book.count - 1);
-  }, [book]);
+    if (!count) return;
+    setViewIndex(count - 1);
+  }, [count]);
 
-  // Save position on view change
+  // Salva posição ao mudar de página
   useEffect(() => {
-    if (book) {
-      const curPage = phys(viewIndex);
-      updatePosition(book.id, curPage, book.count);
+    if (session) {
+      updatePosition(session.meta.id, phys(viewIndex), session.meta.count);
+      // Prefetch dos vizinhos fora da thread principal (worker + cache LRU)
+      session.prefetchAround(phys(viewIndex), settings.prefetch);
     }
-  }, [viewIndex, book, phys, updatePosition]);
+  }, [viewIndex, session, phys, updatePosition, settings.prefetch]);
 
-  // Toggle manga mode
+  // Toggle mangá — CORRIGIDO: mantém a MESMA página física e sem
+  // efeitos colaterais dentro do updater do setState (bug antigo).
   const toggleManga = useCallback(() => {
-    setManga((prev: boolean) => {
-      if (book) {
-        // Adjust view index to maintain same physical page
-        setViewIndex(disp(phys(viewIndex)));
-      }
-      return !prev;
-    });
-  }, [book, viewIndex, phys, disp]);
+    const newManga = !manga;
+    if (count > 0) {
+      const curPhys = phys(viewIndex); // física ANTES do toggle
+      setViewIndex(newManga ? count - 1 - curPhys : curPhys);
+    }
+    setManga(newManga);
+  }, [manga, count, viewIndex, phys]);
 
-  const toggleDblPage = useCallback(() => {
-    setDblPage((prev: boolean) => !prev);
-  }, []);
+  const toggleDblPage = useCallback(() => setDblPage(prev => !prev), []);
 
   const cycleFit = useCallback(() => {
-    setFit(prev => {
-      if (prev === 'width') return 'height';
-      if (prev === 'height') return 'page';
-      return 'width';
-    });
+    setFit(prev => (prev === 'width' ? 'height' : prev === 'height' ? 'page' : 'width'));
   }, []);
 
-  const zoomIn = useCallback(() => {
-    setZoom(prev => Math.min(4, prev * 1.25));
-  }, []);
-
-  const zoomOut = useCallback(() => {
-    setZoom(prev => Math.max(0.25, prev / 1.25));
-  }, []);
+  const zoomIn = useCallback(() => setZoom(prev => Math.min(4, prev * 1.25)), []);
+  const zoomOut = useCallback(() => setZoom(prev => Math.max(0.25, prev / 1.25)), []);
 
   const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setFullscreen(false);
-    }
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
   }, []);
 
-  // Keyboard shortcuts
+  // Sincroniza estado real de fullscreen (inclui Esc nativo)
+  useEffect(() => {
+    const handler = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Keyboard shortcuts — desativados quando um diálogo/modal está aberto
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).matches('input, textarea, select')) return;
+      const target = e.target as HTMLElement;
+      if (target.matches('input, textarea, select')) return;
+      const modalOpen = !!document.querySelector('[role="dialog"]');
+      if (modalOpen && e.key !== 'Escape') return;
 
       switch (e.key) {
-        case 'ArrowRight':
-          e.preventDefault();
-          manga ? goPrev() : goNext();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          manga ? goNext() : goPrev();
-          break;
+        case 'ArrowRight': e.preventDefault(); manga ? goPrev() : goNext(); break;
+        case 'ArrowLeft': e.preventDefault(); manga ? goNext() : goPrev(); break;
         case 'Home': goFirst(); break;
         case 'End': goLast(); break;
         case 'f': case 'F': toggleFullscreen(); break;
         case 'm': case 'M': toggleManga(); break;
         case 'd': case 'D': toggleDblPage(); break;
         case 'w': case 'W': cycleFit(); break;
-        case 'Tab':
-          e.preventDefault();
-          setSidebarOpen(prev => !prev);
-          break;
-        case 'Escape':
-          if (fullscreen) {
-            document.exitFullscreen();
-            setFullscreen(false);
-          }
-          break;
+        case 'Tab': e.preventDefault(); setSidebarOpen(prev => !prev); break;
         case '+': case '=': zoomIn(); break;
         case '-': zoomOut(); break;
       }
     };
-
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [manga, goNext, goPrev, goFirst, goLast, toggleFullscreen, toggleManga, toggleDblPage, cycleFit, zoomIn, zoomOut, fullscreen]);
+  }, [manga, goNext, goPrev, goFirst, goLast, toggleFullscreen, toggleManga, toggleDblPage, cycleFit, zoomIn, zoomOut]);
 
   return {
     settings,
     updateSettings,
     positions,
     library,
-    setLibrary: setLibraryState,
-    book,
+    removeFromLibrary,
+    session,
     viewIndex,
     setViewIndex,
     manga,
@@ -262,7 +224,6 @@ export function useReader() {
     setAiPanelOpen,
     loading,
     loadingProgress,
-    setLoadingProgress,
     error,
     setError,
     openFile,
