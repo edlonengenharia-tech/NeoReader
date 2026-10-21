@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
 const tar = require('tar');
-const { createExtractorFromFile } = require('node-unrar-js');
+const { createExtractorFromData } = require('node-unrar-js');
 
 // ---- State persistence ----
 const STATE_DIR = path.join(app.getPath('userData'));
@@ -142,7 +142,7 @@ function readCBZ(filePath) {
 
   return entries.map(entry => ({
     name: entry.entryName,
-    data: entry.getData().toString('base64'),
+     entry.getData().toString('base64'),
     mime: guessMime(entry.entryName),
   }));
 }
@@ -150,7 +150,17 @@ function readCBZ(filePath) {
 // CBR/RAR (pure JS via node-unrar-js - NO native deps!)
 async function readCBR(filePath) {
   try {
-    const extractor = await createExtractorFromFile({ filepath: filePath });
+    // Read file as ArrayBuffer
+    const fileBuffer = fs.readFileSync(filePath);
+    const arrayBuffer = fileBuffer.buffer.slice(
+      fileBuffer.byteOffset,
+      fileBuffer.byteOffset + fileBuffer.byteLength
+    );
+
+    // Create extractor from data (in-memory extraction)
+    const extractor = await createExtractorFromData({ data: arrayBuffer });
+    
+    // Get file list
     const list = extractor.getFileList();
     const fileHeaders = Array.from(list.fileHeaders);
     
@@ -169,7 +179,7 @@ async function readCBR(filePath) {
     
     return files.map(file => ({
       name: file.fileHeader.name,
-      data: Buffer.from(file.extraction).toString('base64'),
+       Buffer.from(file.extraction).toString('base64'),
       mime: guessMime(file.fileHeader.name),
     }));
   } catch (error) {
@@ -180,8 +190,6 @@ async function readCBR(filePath) {
 
 // CBT/TAR
 async function readCBT(filePath) {
-  // tar module works with streams, need to read file first
-  // For simplicity, use a basic approach
   throw new Error('Formato CBT/TAR ainda não suportado. Converta para CBZ.');
 }
 
@@ -205,7 +213,7 @@ ipcMain.handle('book:open', async (_e, filePath) => {
   const ext = path.extname(filePath).toLowerCase();
 
   if (ext === '.pdf') {
-    const data = readPDF(filePath);
+    const  readPDF(filePath);
     return { type: 'pdf', data, path: filePath };
   }
 
@@ -304,7 +312,7 @@ ipcMain.handle('ai:ask', async (_e, { messages, settings }) => {
     throw new Error(`AI error ${resp.status}: ${text.slice(0, 200)}`);
   }
 
-  const data = await resp.json();
+  const  await resp.json();
   return data.choices?.[0]?.message?.content || 'Sem resposta.';
 });
 
